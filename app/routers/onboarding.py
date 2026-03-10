@@ -1,32 +1,28 @@
 import os
 import json
+
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
+from sqlalchemy import select
 
 from ..deps import get_db, get_current_user
-from ..models import Case, Party, Document, DocumentType, CaseStatus
+from ..models import Case, Party, Document, DocumentType, UserRole
 from ..services.onboarding import make_onboarding_token, verify_onboarding_token
 from ..services.audit import log_audit
+from ..services.kyc_checklist import build_kyc_checklist, recompute_case_status_with_kyc
 
 router = APIRouter(prefix="/onboarding", tags=["onboarding"])
 
-REQUIRED_DOCS = {DocumentType.ID, DocumentType.PROOF_ADDRESS}
 
+def _assert_case_access(user, case: Case):
+    # multi-agence
+    if case.org_id != user.org_id:
+        raise HTTPException(403, "Not allowed")
 
-def recompute_case_status(case: Case) -> CaseStatus:
-    # RED si un screening a flag
-    if any(s.risk_flag for s in case.screenings):
-        return CaseStatus.RED
-
-    # ORANGE tant que docs incomplets (pour toutes les parties du dossier)
-    docs = {(d.party_id, d.doc_type) for d in case.documents}
-    for p in case.parties:
-        for dt in REQUIRED_DOCS:
-            if (p.id, dt) not in docs:
-                return CaseStatus.ORANGE
-
-    return CaseStatus.GREEN
+    # AGENT: seulement ses dossiers
+    if user.role == UserRole.AGENT and case.created_by_user_id != user.id:
+        raise HTTPException(403, "Not allowed")
 
 
 @router.post("/cases/{case_id}/parties/{party_id}/link")
@@ -39,6 +35,7 @@ def create_onboarding_link(
     case = db.get(Case, case_id)
     if not case:
         raise HTTPException(404, "Case not found")
+    _assert_case_access(user, case)
 
     party = db.get(Party, party_id)
     if not party or party.case_id != case_id:
@@ -46,12 +43,18 @@ def create_onboarding_link(
 
     token = make_onboarding_token(case_id=case_id, party_id=party_id)
     url = f"http://127.0.0.1:8000/onboarding/upload?token={token}"  # MVP local
+
     log_audit(db, case_id, "ONBOARDING_LINK_CREATED", f"party_id={party_id}")
+    db.commit()
+
     return {"url": url, "token": token}
 
 
 @router.get("/status")
 def onboarding_status(token: str, db: Session = Depends(get_db)):
+    """
+    Route publique (via token). Pas d'auth user ici.
+    """
     try:
         payload = verify_onboarding_token(token)
     except ValueError:
@@ -64,26 +67,83 @@ def onboarding_status(token: str, db: Session = Depends(get_db)):
     if not case:
         raise HTTPException(404, "Case not found")
 
-    docs_for_party = {d.doc_type for d in case.documents if d.party_id == party_id}
-    have_id = DocumentType.ID in docs_for_party
-    have_addr = DocumentType.PROOF_ADDRESS in docs_for_party
+    party = db.get(Party, party_id)
+    if not party or party.case_id != case_id:
+        raise HTTPException(404, "Party not found for this case")
+
+    docs_for_party = db.scalars(
+        select(Document).where(
+            Document.case_id == case_id,
+            Document.party_id == party_id
+        )
+    ).all()
+    docs_types = {d.doc_type for d in docs_for_party}
+
+    have_id = DocumentType.ID in docs_types
+    have_addr = DocumentType.PROOF_ADDRESS in docs_types
+
+    checklist = build_kyc_checklist(db, case_id)
+    party_row = next((p for p in checklist["parties"] if p["party_id"] == party_id), None)
+    missing_docs = party_row["missing_docs"] if party_row else ["ID", "PROOF_ADDRESS"]
 
     return {
         "case_id": case_id,
         "party_id": party_id,
         "have_id": have_id,
         "have_proof_address": have_addr,
-        "required_missing": [dt.value for dt in REQUIRED_DOCS if dt not in docs_for_party],
+        "required_missing": missing_docs,
         "case_status": case.status.value,
+        "kyc_complete": checklist["is_complete"],
     }
+
+
+@router.get("/cases/{case_id}/kyc-checklist")
+def get_kyc_checklist(
+    case_id: int,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    case = db.get(Case, case_id)
+    if not case:
+        raise HTTPException(404, "Case not found")
+    _assert_case_access(user, case)
+
+    return build_kyc_checklist(db, case_id)
+
+
+@router.get("/cases/{case_id}/documents")
+def list_case_documents(
+    case_id: int,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    case = db.get(Case, case_id)
+    if not case:
+        raise HTTPException(404, "Case not found")
+    _assert_case_access(user, case)
+
+    docs = db.query(Document).filter(Document.case_id == case_id).order_by(Document.created_at.asc()).all()
+
+    return [
+        {
+            "id": d.id,
+            "party_id": d.party_id,
+            "doc_type": d.doc_type.value if hasattr(d.doc_type, "value") else str(d.doc_type),
+            "filename": d.filename,
+            "storage_key": d.storage_key,
+            "created_at": d.created_at,
+        }
+        for d in docs
+    ]
 
 
 @router.get("/upload", response_class=HTMLResponse)
 def upload_page(token: str):
-    # IMPORTANT : injection token sûre (JSON string)
+    """
+    Page publique (token).
+    """
     token_json = json.dumps(token)
 
-    # NOTE: pas de f-string sur tout le HTML (sinon problème avec les { } du JS)
     html = """
 <!DOCTYPE html>
 <html lang="fr">
@@ -297,7 +357,7 @@ def upload_page(token: str):
     <div class="card">
       <div class="hero">
         <h2>Ce qu’on te demande</h2>
-        <p>Tu completes le dossier en 2 minutes. L’agence garde une preuve horodatée pour la conformité (CENTIF).</p>
+        <p>Tu complètes le dossier en 2 minutes. L’agence garde une preuve horodatée pour la conformité (CENTIF).</p>
       </div>
       <div class="inner">
         <div class="steps">
@@ -331,26 +391,6 @@ def upload_page(token: str):
   const title = document.getElementById("statusTitle");
   const text = document.getElementById("statusText");
 
-  const hint = document.querySelector(".hint");
-  const checklist = document.createElement("div");
-  checklist.style.marginTop = "12px";
-  checklist.style.display = "grid";
-  checklist.style.gap = "10px";
-  hint.parentNode.insertBefore(checklist, box);
-
-  function pill(ok, label) {
-    const div = document.createElement("div");
-    div.style.padding = "10px 12px";
-    div.style.borderRadius = "14px";
-    div.style.border = "1px solid rgba(255,255,255,0.12)";
-    div.style.background = ok ? "rgba(34,197,94,0.10)" : "rgba(245,158,11,0.10)";
-    div.style.color = "rgba(255,255,255,0.92)";
-    div.style.display = "flex";
-    div.style.justifyContent = "space-between";
-    div.innerHTML = `<span>${label}</span><b>${ok ? "✅" : "⏳"}</b>`;
-    return div;
-  }
-
   function showStatus(kind, t, msg) {
     box.style.display = "block";
     box.className = "status " + kind;
@@ -362,10 +402,6 @@ def upload_page(token: str):
     const res = await fetch(`/onboarding/status?token=${encodeURIComponent(TOKEN)}`);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return;
-
-    checklist.innerHTML = "";
-    checklist.appendChild(pill(data.have_id, "Pièce d’identité (ID)"));
-    checklist.appendChild(pill(data.have_proof_address, "Justificatif de domicile"));
 
     const st = data.case_status || "ORANGE";
     if (st === "GREEN") showStatus("ok", "Dossier complet ✅", "Merci. L’agence a reçu les documents requis.");
@@ -425,6 +461,9 @@ def upload_document(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
+    """
+    Route publique (via token). Pas d'auth user ici.
+    """
     try:
         payload = verify_onboarding_token(token)
     except ValueError:
@@ -442,7 +481,7 @@ def upload_document(
         raise HTTPException(404, "Party not found")
 
     os.makedirs("storage", exist_ok=True)
-    safe_name = file.filename.replace("/", "_").replace("\\", "_")
+    safe_name = (file.filename or "upload").replace("/", "_").replace("\\", "_")
     storage_key = f"storage/case_{case_id}_party_{party_id}_{doc_type.value}_{safe_name}"
 
     with open(storage_key, "wb") as f:
@@ -452,13 +491,24 @@ def upload_document(
         case_id=case_id,
         party_id=party_id,
         doc_type=doc_type,
-        filename=file.filename,
+        filename=file.filename or safe_name,
         storage_key=storage_key,
     )
     db.add(doc)
 
-    case.status = recompute_case_status(case)
-    db.commit()
+    # ✅ Recalcul KYC + statut auto
+    checklist = recompute_case_status_with_kyc(db, case)
 
-    log_audit(db, case_id, "DOCUMENT_UPLOADED", f"party_id={party_id} doc_type={doc_type.value} file={file.filename}")
-    return {"ok": True, "storage_key": storage_key, "case_status": case.status.value}
+    # ✅ Audit + commit (sinon tu perds les logs)
+    log_audit(db, case_id, "DOCUMENT_UPLOADED", f"party_id={party_id} doc_type={doc_type.value} file={safe_name}")
+    log_audit(db, case_id, "KYC_CHECKLIST_UPDATED", f"is_complete={checklist['is_complete']} status={case.status.value}")
+
+    db.commit()
+    db.refresh(case)
+
+    return {
+        "ok": True,
+        "storage_key": storage_key,
+        "case_status": case.status.value,
+        "kyc_complete": checklist["is_complete"],
+    }

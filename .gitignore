@@ -1,16 +1,25 @@
-# Environnement virtuel
+# Python
 .venv/
-env/
 __pycache__/
 *.pyc
+.pytest_cache/
 
-# Base de données locale
-*.sqlite3
-*.db
-
-# Variables d'environnement (TRÈS IMPORTANT)
+# Environment
 .env
 
-# Dossiers IDE
-.vscode/
-.idea/
+# Database local
+*.db
+
+# Storage uploads
+storage/
+
+# Node
+argos-frontend/node_modules/
+argos-frontend/.next/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

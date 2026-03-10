@@ -1,0 +1,35 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16
+    container_name: argos_db
+    restart: always
+    environment:
+      POSTGRES_USER: argos
+      POSTGRES_PASSWORD: argos_password
+      POSTGRES_DB: argos_centif
+    volumes:
+      - argos_pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  api:
+    build: .
+    container_name: argos_api
+    restart: always
+    depends_on:
+      - db
+    environment:
+      DATABASE_URL: postgresql+psycopg2://argos:argos_password@db:5432/argos_centif
+      JWT_SECRET: change-this-in-prod
+      ACCESS_TOKEN_MINUTES: 720
+      OPENSANCTIONS_API_KEY:
+      OPENSANCTIONS_BASE_URL: https://api.opensanctions.org
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./storage:/app/storage
+
+volumes:
+  argos_pgdata:
