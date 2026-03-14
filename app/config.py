@@ -19,8 +19,12 @@ class Settings(BaseSettings):
     S3_ACCESS_KEY: str | None = None
     S3_SECRET_KEY: str | None = None
 
-    # Onboarding links
+    # Onboarding links (token signing + public URL for generated links)
     ONBOARDING_LINK_SECRET: str = "change-me-too"
     ONBOARDING_LINK_TTL_HOURS: int = 72
+    ONBOARDING_BASE_URL: str = "http://127.0.0.1:8000"
+
+    # CORS (comma-separated list of allowed origins; default = local dev)
+    CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
 
 settings = Settings()

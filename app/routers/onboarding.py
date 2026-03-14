@@ -6,6 +6,7 @@ from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 
+from ..config import settings
 from ..deps import get_db, get_current_user
 from ..models import Case, Party, Document, DocumentType, UserRole
 from ..services.onboarding import make_onboarding_token, verify_onboarding_token
@@ -42,7 +43,8 @@ def create_onboarding_link(
         raise HTTPException(404, "Party not found for this case")
 
     token = make_onboarding_token(case_id=case_id, party_id=party_id)
-    url = f"http://127.0.0.1:8000/onboarding/upload?token={token}"  # MVP local
+    base = settings.ONBOARDING_BASE_URL.rstrip("/")
+    url = f"{base}/onboarding/upload?token={token}"
 
     log_audit(db, case_id, "ONBOARDING_LINK_CREATED", f"party_id={party_id}")
     db.commit()
@@ -137,12 +139,17 @@ def list_case_documents(
     ]
 
 
+def _escape_js_string(s: str) -> str:
+    """Escape for use inside a JavaScript double-quoted string."""
+    return s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r")
+
+
 @router.get("/upload", response_class=HTMLResponse)
 def upload_page(token: str):
     """
     Page publique (token).
     """
-    token_json = json.dumps(token)
+    token_js = _escape_js_string(token)
 
     html = """
 <!DOCTYPE html>
@@ -381,7 +388,7 @@ def upload_page(token: str):
   </div>
 
 <script>
-  const TOKEN = __TOKEN__;
+  const TOKEN = "__TOKEN__";
 
   const btn = document.getElementById("uploadBtn");
   const fileInput = document.getElementById("file");
@@ -449,7 +456,7 @@ def upload_page(token: str):
 
 </body>
 </html>
-""".replace("__TOKEN__", token_json)
+""".replace("__TOKEN__", token_js)
 
     return HTMLResponse(content=html, status_code=200)
 

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { getToken } from "@/lib/auth";
+import { getApiBaseUrlOrThrow } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 
@@ -19,7 +20,7 @@ export function ExportPdfCard({
       setError("");
 
       const token = getToken();
-      const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL;
+      const apiBase = getApiBaseUrlOrThrow();
 
       const res = await fetch(`${apiBase}/reports/cases/${caseId}/pdf`, {
         method: "GET",
