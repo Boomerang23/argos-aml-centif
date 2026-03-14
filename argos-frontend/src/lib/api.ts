@@ -1,3 +1,5 @@
+import { logout } from "@/lib/auth";
+
 const API_BASE_URL_KEY = "NEXT_PUBLIC_API_BASE_URL";
 
 function getApiBaseUrl(): string {
@@ -41,17 +43,8 @@ export async function apiFetch(
 ) {
   const API_BASE = getApiBaseUrl();
 
-  const token =
-    typeof window !== "undefined"
-      ? localStorage.getItem("access_token")
-      : null;
-
   const headers = new Headers(options.headers || {});
   let body: BodyInit | undefined;
-
-  if (token && !headers.has("Authorization")) {
-    headers.set("Authorization", `Bearer ${token}`);
-  }
 
   if (options.body !== undefined && options.body !== null) {
     if (
@@ -71,12 +64,16 @@ export async function apiFetch(
     ...options,
     headers,
     body,
+    credentials: "include",
   });
 
   const contentType = res.headers.get("content-type") || "";
   const isJson = contentType.includes("application/json");
 
   if (!res.ok) {
+    if (res.status === 401 && typeof window !== "undefined") {
+      logout();
+    }
     const errorBody = isJson ? await res.json() : await res.text();
     throw new Error(
       typeof errorBody === "string"

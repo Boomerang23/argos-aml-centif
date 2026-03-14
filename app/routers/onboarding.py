@@ -15,6 +15,30 @@ from ..services.kyc_checklist import build_kyc_checklist, recompute_case_status_
 
 router = APIRouter(prefix="/onboarding", tags=["onboarding"])
 
+# Allowed document types for onboarding upload (extension + content-type)
+_ONBOARDING_ALLOWED_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png"}
+_ONBOARDING_ALLOWED_CONTENT_TYPES = {"application/pdf", "image/jpeg", "image/png"}
+
+
+def _validate_upload_file_type(file: UploadFile) -> None:
+    """Reject uploads that are not PDF, JPG, or PNG. Raises HTTP 400 with clear message."""
+    name = (file.filename or "").strip().lower()
+    if not name:
+        raise HTTPException(status_code=400, detail="Missing or invalid filename.")
+    ext = os.path.splitext(name)[1]
+    if ext not in _ONBOARDING_ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail="File type not allowed. Allowed types: PDF, JPG, JPEG, PNG.",
+        )
+    if file.content_type:
+        ct = file.content_type.strip().lower().split(";")[0].strip()
+        if ct not in _ONBOARDING_ALLOWED_CONTENT_TYPES:
+            raise HTTPException(
+                status_code=400,
+                detail="File type not allowed. Allowed types: PDF, JPG, JPEG, PNG.",
+            )
+
 
 def _assert_case_access(user, case: Case):
     # multi-agence
@@ -487,12 +511,37 @@ def upload_document(
     if not party or party.case_id != case_id:
         raise HTTPException(404, "Party not found")
 
+    _validate_upload_file_type(file)
+
     os.makedirs("storage", exist_ok=True)
     safe_name = (file.filename or "upload").replace("/", "_").replace("\\", "_")
     storage_key = f"storage/case_{case_id}_party_{party_id}_{doc_type.value}_{safe_name}"
 
-    with open(storage_key, "wb") as f:
-        f.write(file.file.read())
+    max_bytes = settings.ONBOARDING_UPLOAD_MAX_BYTES
+    chunk_size = 1024 * 1024  # 1 MB read at a time
+    total = 0
+    try:
+        with open(storage_key, "wb") as f:
+            while True:
+                chunk = file.file.read(chunk_size)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_bytes:
+                    break
+                f.write(chunk)
+        if total > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File too large. Maximum size is {max_bytes // (1024 * 1024)} MB.",
+            )
+    except HTTPException:
+        if os.path.exists(storage_key):
+            try:
+                os.remove(storage_key)
+            except OSError:
+                pass
+        raise
 
     doc = Document(
         case_id=case_id,

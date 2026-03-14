@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
 from .db import Base, engine
 from .immutability import setup_immutability_listeners
-from .routers import auth, cases, screening, reports, onboarding, admin, dashboard
+from .routers import auth, cases, screening, reports, onboarding, admin, dashboard, health
 
 
 def create_app() -> FastAPI:
@@ -27,6 +27,7 @@ def create_app() -> FastAPI:
     Base.metadata.create_all(bind=engine)
 
     # Routers
+    app.include_router(health.router)
     app.include_router(auth.router)
     app.include_router(cases.router)
     app.include_router(screening.router)

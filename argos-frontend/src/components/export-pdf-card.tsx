@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { getToken } from "@/lib/auth";
 import { getApiBaseUrlOrThrow } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -19,14 +18,11 @@ export function ExportPdfCard({
       setLoading(true);
       setError("");
 
-      const token = getToken();
       const apiBase = getApiBaseUrlOrThrow();
 
       const res = await fetch(`${apiBase}/reports/cases/${caseId}/pdf`, {
         method: "GET",
-        headers: {
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
+        credentials: "include",
       });
 
       if (!res.ok) {

@@ -2,13 +2,19 @@ from pydantic import BaseModel, EmailStr
 from typing import Optional, List
 from datetime import date, datetime
 
-from .models import CaseStatus, PartyType, DocumentType, ComplianceDecision
+from .models import CaseStatus, PartyType, DocumentType, ComplianceDecision, UserRole
 
 
 # ---------- AUTH ----------
 class TokenOut(BaseModel):
     access_token: str
     token_type: str = "bearer"
+
+
+class UserMeOut(BaseModel):
+    email: str
+    role: UserRole
+    org_id: int
 
 
 class LoginIn(BaseModel):

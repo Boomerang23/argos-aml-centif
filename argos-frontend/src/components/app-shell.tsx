@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
-import { getToken, logout } from "@/lib/auth";
+import { logout } from "@/lib/auth";
 import { useMe } from "@/hooks/use-me";
 import { Button } from "@/components/ui/button";
 
@@ -34,17 +34,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [ready, setReady] = useState(false);
 
-  const { data: meData } = useMe();
+  const { data: meData, isPending, isError } = useMe();
   const isAdmin = !!meData?.isAdmin;
 
   useEffect(() => {
-    const token = getToken();
-    if (!token) {
+    if (isPending) return;
+    if (isError || !meData) {
       router.replace("/login");
       return;
     }
     setReady(true);
-  }, [router]);
+  }, [isPending, isError, meData, router]);
 
   if (!ready) {
     return (

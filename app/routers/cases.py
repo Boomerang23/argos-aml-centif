@@ -281,39 +281,6 @@ def get_case(
 
     return c
 
-@router.post("/{case_id}/compliance-decision")
-def compliance_decision(
-    case_id: int,
-    payload: dict,
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user),
-):
-    c = db.get(Case, case_id)
-    if not c:
-        raise HTTPException(404, "Case not found")
-
-    if c.org_id != user.org_id:
-        raise HTTPException(403, "Not allowed")
-
-    decision = payload.get("decision")
-    comment = payload.get("comment")
-
-    if decision not in ["VALIDATED", "ESCALATED", "REJECTED"]:
-        raise HTTPException(400, "Invalid decision")
-
-    c.compliance_decision = decision
-    c.compliance_comment = comment
-    c.date_validation = datetime.utcnow()
-    c.validated_by_user_id = user.id
-
-    db.add(c)
-    db.commit()
-
-    return {
-        "status": "ok",
-        "decision": decision,
-    }
-
 
 @router.post("/{case_id}/compliance-decision", response_model=ComplianceDecisionOut)
 def set_compliance_decision(

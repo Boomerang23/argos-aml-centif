@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/api";
-import { setToken } from "@/lib/auth";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -25,12 +24,11 @@ export default function LoginPage() {
     setError("");
 
     try {
-      // FastAPI attend username/password en form-urlencoded
       const formData = new URLSearchParams();
       formData.append("username", email);
       formData.append("password", password);
 
-      const res = await apiFetch("/auth/login", {
+      await apiFetch("/auth/login", {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
@@ -38,17 +36,12 @@ export default function LoginPage() {
         body: formData.toString(),
       });
 
-      console.log("LOGIN RES:", res);
-
-      setToken(res.access_token);
-
       router.push("/dashboard");
-    } catch (err: any) {
-      console.log("LOGIN ERROR:", err);
+    } catch {
       setError("Identifiants incorrects");
+    } finally {
+      setLoading(false);
     }
-
-    setLoading(false);
   }
 
   return (

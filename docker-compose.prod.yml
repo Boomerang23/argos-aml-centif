@@ -1,4 +1,5 @@
 version: "3.9"
+# Production: db + api + frontend. Set NEXT_PUBLIC_API_BASE_URL to the URL the browser uses to reach the API.
 
 services:
   db:
@@ -13,17 +14,42 @@ services:
       - argos_pgdata:/var/lib/postgresql/data
     ports:
       - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U argos -d argos_centif"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  redis:
+    image: redis:7-alpine
+    container_name: argos_redis
+    restart: always
+    volumes:
+      - argos_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 2s
 
   api:
     build: .
     container_name: argos_api
     restart: always
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
+      ENVIRONMENT: production
       DATABASE_URL: postgresql+psycopg2://argos:argos_password@db:5432/argos_centif
+      REDIS_URL: redis://redis:6379/0
       JWT_SECRET: change-this-in-prod
       ACCESS_TOKEN_MINUTES: 720
+      ONBOARDING_LINK_SECRET: change-this-in-prod
       OPENSANCTIONS_API_KEY:
       OPENSANCTIONS_BASE_URL: https://api.opensanctions.org
     ports:
@@ -31,5 +57,19 @@ services:
     volumes:
       - ./storage:/app/storage
 
+  frontend:
+    build:
+      context: ./argos-frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
+    container_name: argos_frontend
+    restart: always
+    depends_on:
+      - api
+    ports:
+      - "3000:3000"
+
 volumes:
   argos_pgdata:
+  argos_redis_data:

@@ -5,14 +5,17 @@ import { apiFetch } from "@/lib/api";
 
 export function useMe() {
   return useQuery({
-    queryKey: ["me-org"],
+    queryKey: ["me"],
     queryFn: async () => {
-      try {
-        const org = await apiFetch("/admin/org/me");
-        return { isAdmin: true, org };
-      } catch {
-        return { isAdmin: false, org: null };
-      }
+      const data = await apiFetch<{
+        email: string;
+        role: "ADMIN" | "AGENT" | "COMPLIANCE_OFFICER";
+        org_id: number;
+      }>("/auth/me");
+      return {
+        isAdmin: data.role === "ADMIN",
+        user: data,
+      };
     },
   });
 }

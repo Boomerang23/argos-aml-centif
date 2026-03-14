@@ -1,11 +1,12 @@
 "use client";
 
-import { getToken, logout } from "@/lib/auth";
+import { logout } from "@/lib/auth";
+import { useMe } from "@/hooks/use-me";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 
 export default function ProfilePage() {
-  const token = getToken();
+  const { data: meData } = useMe();
 
   return (
     <div className="space-y-4">
@@ -22,8 +23,8 @@ export default function ProfilePage() {
         </CardHeader>
         <CardContent className="space-y-3 text-sm">
           <div>
-            <span className="text-gray-500">Token présent :</span>{" "}
-            {token ? "Oui" : "Non"}
+            <span className="text-gray-500">Session :</span>{" "}
+            {meData?.user ? `Active (${meData.user.email})` : "Chargement…"}
           </div>
 
           <Button variant="outline" onClick={() => logout()}>
